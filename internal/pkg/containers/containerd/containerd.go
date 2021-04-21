@@ -1,28 +1,28 @@
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 // Package containerd implements containers.Inspector via containerd API
 package containerd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path"
 	"strings"
 	"syscall"
 
-	"github.com/containerd/cgroups"
+	v1 "github.com/containerd/cgroups/stats/v1"
 	"github.com/containerd/containerd"
 	tasks "github.com/containerd/containerd/api/services/tasks/v1"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/namespaces"
 	"github.com/containerd/typeurl"
 	"github.com/hashicorp/go-multierror"
-	"github.com/pkg/errors"
 
-	"github.com/talos-systems/talos/internal/pkg/constants"
 	ctrs "github.com/talos-systems/talos/internal/pkg/containers"
+	"github.com/talos-systems/talos/pkg/machinery/constants"
 )
 
 type inspector struct {
@@ -34,17 +34,17 @@ type inspectorOptions struct {
 	containerdAddress string
 }
 
-// Option configures containerd Inspector
+// Option configures containerd Inspector.
 type Option func(*inspectorOptions)
 
-// WithContainerdAddress configures containerd address to use
+// WithContainerdAddress configures containerd address to use.
 func WithContainerdAddress(address string) Option {
 	return func(o *inspectorOptions) {
 		o.containerdAddress = address
 	}
 }
 
-// NewInspector builds new Inspector instance in specified namespace
+// NewInspector builds new Inspector instance in specified namespace.
 func NewInspector(ctx context.Context, namespace string, options ...Option) (ctrs.Inspector, error) {
 	var err error
 
@@ -57,21 +57,23 @@ func NewInspector(ctx context.Context, namespace string, options ...Option) (ctr
 	}
 
 	i := inspector{}
+
 	i.client, err = containerd.New(opt.containerdAddress)
 	if err != nil {
 		return nil, err
 	}
+
 	i.nsctx = namespaces.WithNamespace(ctx, namespace)
 
 	return &i, nil
 }
 
-// Close frees associated resources
+// Close frees associated resources.
 func (i *inspector) Close() error {
 	return i.client.Close()
 }
 
-// Images returns a hash of image digest -> name
+// Images returns a hash of image digest -> name.
 func (i *inspector) Images() (map[string]string, error) {
 	images, err := i.client.ListImages(i.nsctx, "")
 	if err != nil {
@@ -80,32 +82,37 @@ func (i *inspector) Images() (map[string]string, error) {
 
 	// create a map[sha]name for easier lookups later
 	imageList := make(map[string]string, len(images))
+
 	for _, image := range images {
 		if strings.HasPrefix(image.Name(), "sha256:") {
 			continue
 		}
+
 		imageList[image.Target().Digest.String()] = image.Name()
 	}
+
 	return imageList, nil
 }
 
-//nolint: gocyclo
+//nolint:gocyclo,cyclop
 func (i *inspector) containerInfo(cntr containerd.Container, imageList map[string]string, singleLookup bool) (*ctrs.Container, error) {
 	cp := &ctrs.Container{}
 
 	info, err := cntr.Info(i.nsctx)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error getting container info for %q", cntr.ID())
+		return nil, fmt.Errorf("error getting container info for %q: %w", cntr.ID(), err)
 	}
 
 	spec, err := cntr.Spec(i.nsctx)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error getting container spec for %q", cntr.ID())
+		return nil, fmt.Errorf("error getting container spec for %q: %w", cntr.ID(), err)
 	}
 
 	img, err := cntr.Image(i.nsctx)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error getting container image for %q", cntr.ID())
+		if !errdefs.IsNotFound(err) {
+			return nil, fmt.Errorf("error getting container image for %q: %w", cntr.ID(), err)
+		}
 	}
 
 	task, err := cntr.Task(i.nsctx, nil)
@@ -114,12 +121,13 @@ func (i *inspector) containerInfo(cntr containerd.Container, imageList map[strin
 			// running task not found, skip container
 			return nil, nil
 		}
-		return nil, errors.Wrapf(err, "error getting container task for %q", cntr.ID())
+
+		return nil, fmt.Errorf("error getting container task for %q: %w", cntr.ID(), err)
 	}
 
 	status, err := task.Status(i.nsctx)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error getting task status for %q", cntr.ID())
+		return nil, fmt.Errorf("error getting task status for %q: %w", cntr.ID(), err)
 	}
 
 	cp.Inspector = i
@@ -127,13 +135,19 @@ func (i *inspector) containerInfo(cntr containerd.Container, imageList map[strin
 	cp.Name = cntr.ID()
 	cp.Display = cntr.ID()
 	cp.RestartCount = "0"
-	cp.Digest = img.Target().Digest.String()
+
+	if img != nil {
+		cp.Digest = img.Target().Digest.String()
+	}
+
 	cp.Image = cp.Digest
+
 	if imageList != nil {
 		if resolved, ok := imageList[cp.Image]; ok {
 			cp.Image = resolved
 		}
 	}
+
 	cp.Pid = task.Pid()
 	cp.Status = strings.ToUpper(string(status.Status))
 
@@ -151,17 +165,17 @@ func (i *inspector) containerInfo(cntr containerd.Container, imageList map[strin
 	if status.Status == containerd.Running {
 		metrics, err := task.Metrics(i.nsctx)
 		if err != nil {
-			return nil, errors.Wrapf(err, "error pulling metrics for %q", cntr.ID())
+			return nil, fmt.Errorf("error pulling metrics for %q: %w", cntr.ID(), err)
 		}
 
 		anydata, err := typeurl.UnmarshalAny(metrics.Data)
 		if err != nil {
-			return nil, errors.Wrapf(err, "error unmarshalling metrics for %q", cntr.ID())
+			return nil, fmt.Errorf("error unmarshalling metrics for %q: %w", cntr.ID(), err)
 		}
 
-		data, ok := anydata.(*cgroups.Metrics)
+		data, ok := anydata.(*v1.Metrics)
 		if !ok {
-			return nil, errors.New("failed to convert metric data to cgroups.Metrics")
+			return nil, errors.New("failed to convert metric data to v1.Metrics")
 		}
 
 		cp.Metrics = &ctrs.ContainerMetrics{}
@@ -208,12 +222,12 @@ func (i *inspector) containerInfo(cntr containerd.Container, imageList map[strin
 
 					if sandbox, found := infraSpec.Annotations["io.kubernetes.cri.sandbox-log-directory"]; found {
 						cp.Sandbox = sandbox
+
 						break
 					}
 				}
 			}
 		}
-
 	}
 
 	// Typically on actual application containers inside the pod/sandbox
@@ -229,7 +243,7 @@ func (i *inspector) containerInfo(cntr containerd.Container, imageList map[strin
 //
 // If container is not found, Container returns nil
 //
-//nolint: gocyclo
+//nolint:gocyclo
 func (i *inspector) Container(id string) (*ctrs.Container, error) {
 	var (
 		query           string
@@ -241,12 +255,15 @@ func (i *inspector) Container(id string) (*ctrs.Container, error) {
 	if slashIdx > 0 {
 		name := ""
 		namespace, pod := id[:slashIdx], id[slashIdx+1:]
+
 		semicolonIdx := strings.LastIndex(pod, ":")
 		if semicolonIdx > 0 {
 			name = pod[semicolonIdx+1:]
 			pod = pod[:semicolonIdx]
 		}
+
 		query = fmt.Sprintf("labels.\"io.kubernetes.pod.namespace\"==%q,labels.\"io.kubernetes.pod.name\"==%q", namespace, pod)
+
 		if name != "" {
 			query += fmt.Sprintf(",labels.\"io.kubernetes.container.name\"==%q", name)
 		} else {
@@ -270,6 +287,7 @@ func (i *inspector) Container(id string) (*ctrs.Container, error) {
 	for j := range containers {
 		if skipWithK8sName {
 			var labels map[string]string
+
 			if labels, err = containers[j].Labels(i.nsctx); err == nil {
 				if _, found := labels["io.kubernetes.container.name"]; found {
 					continue
@@ -284,12 +302,11 @@ func (i *inspector) Container(id string) (*ctrs.Container, error) {
 	}
 
 	return cntr, err
-
 }
 
 // Pods collects information about running pods & containers.
 //
-// nolint: gocyclo
+//nolint:gocyclo
 func (i *inspector) Pods() ([]*ctrs.Pod, error) {
 	imageList, err := i.Images()
 	if err != nil {
@@ -310,8 +327,10 @@ func (i *inspector) Pods() ([]*ctrs.Pod, error) {
 		cp, err := i.containerInfo(cntr, imageList, false)
 		if err != nil {
 			multiErr = multierror.Append(multiErr, err)
+
 			continue
 		}
+
 		if cp == nil {
 			// not running container
 			continue
@@ -321,15 +340,19 @@ func (i *inspector) Pods() ([]*ctrs.Pod, error) {
 		// to an existing pod
 		// Also set pod sandbox ID if defined
 		found := false
+
 		for _, pod := range pods {
 			if pod.Name != cp.PodName {
 				continue
 			}
+
 			if cp.Sandbox != "" {
 				pod.Sandbox = cp.Sandbox
 			}
+
 			pod.Containers = append(pod.Containers, cp)
 			found = true
+
 			break
 		}
 
@@ -358,7 +381,7 @@ func (i *inspector) Pods() ([]*ctrs.Pod, error) {
 	return pods, multiErr.ErrorOrNil()
 }
 
-// GetProcessStderr returns process stderr
+// GetProcessStderr returns process stderr.
 func (i *inspector) GetProcessStderr(id string) (string, error) {
 	task, err := i.client.TaskService().Get(i.nsctx, &tasks.GetRequest{ContainerID: id})
 	if err != nil {
@@ -368,8 +391,9 @@ func (i *inspector) GetProcessStderr(id string) (string, error) {
 	return task.Process.Stderr, nil
 }
 
-// Kill sends signal to container task
+// Kill sends signal to container task.
 func (i *inspector) Kill(id string, isPodSandbox bool, signal syscall.Signal) error {
 	_, err := i.client.TaskService().Kill(i.nsctx, &tasks.KillRequest{ContainerID: id, Signal: uint32(signal)})
+
 	return err
 }

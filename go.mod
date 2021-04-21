@@ -1,113 +1,105 @@
 module github.com/talos-systems/talos
 
+go 1.16
+
+replace (
+	github.com/talos-systems/talos/pkg/machinery => ./pkg/machinery
+	// forked go-yaml that introduces RawYAML interface, which can be used to populate YAML fields using bytes
+	// which are then encoded as a valid YAML blocks with proper indentiation
+	gopkg.in/yaml.v3 => github.com/unix4ever/yaml v0.0.0-20210315173758-8fb30b8e5a5b
+)
+
 require (
-	code.cloudfoundry.org/bytefmt v0.0.0-20180906201452-2aa6f33b730c
-	github.com/Microsoft/go-winio v0.4.9 // indirect
-	github.com/Microsoft/hcsshim v0.7.0 // indirect
-	github.com/beevik/ntp v0.2.0
-	github.com/containerd/cgroups v0.0.0-20180905221500-58556f5ad844
-	github.com/containerd/containerd v1.2.7
-	github.com/containerd/continuity v0.0.0-20181003075958-be9bd761db19 // indirect
-	github.com/containerd/cri v1.11.1
-	github.com/containerd/fifo v0.0.0-20180307165137-3d5202aec260 // indirect
-	github.com/containerd/typeurl v0.0.0-20180627222232-a93fcdb778cd
-	github.com/coreos/bbolt v1.3.3 // indirect
-	github.com/coreos/etcd v3.3.13+incompatible // indirect
-	github.com/coreos/go-semver v0.3.0 // indirect
-	github.com/coreos/go-systemd v0.0.0-20180828140353-eee3db372b31 // indirect
-	github.com/coreos/pkg v0.0.0-20180928190104-399ea9e2e55f // indirect
-	github.com/dgrijalva/jwt-go v3.2.0+incompatible // indirect
-	github.com/docker/distribution v2.7.1-0.20190205005809-0d3efadf0154+incompatible
-	github.com/docker/docker v1.13.1
+	github.com/AlekSi/pointer v1.1.0
+	github.com/BurntSushi/toml v0.3.1
+	github.com/Microsoft/hcsshim v0.8.10 // indirect
+	github.com/Microsoft/hcsshim/test v0.0.0-20201124231931-de74fe8b94ae // indirect
+	github.com/beevik/ntp v0.3.0
+	github.com/containerd/cgroups v0.0.0-20201119153540-4cbc285b3327
+	github.com/containerd/containerd v1.4.4
+	github.com/containerd/continuity v0.0.0-20200928162600-f2cc35102c2a // indirect
+	github.com/containerd/cri v1.19.0
+	github.com/containerd/go-cni v1.0.2
+	github.com/containerd/ttrpc v1.0.2 // indirect
+	github.com/containerd/typeurl v1.0.1
+	github.com/containernetworking/cni v0.8.1
+	github.com/containernetworking/plugins v0.9.1
+	github.com/coreos/go-iptables v0.5.0
+	github.com/coreos/go-semver v0.3.0
+	github.com/cosi-project/runtime v0.0.0-20210409233936-10d6103c19ab
+	github.com/docker/distribution v2.7.1+incompatible
+	github.com/docker/docker v20.10.4+incompatible
 	github.com/docker/go-connections v0.4.0
-	github.com/docker/go-events v0.0.0-20170721190031-9461782956ad // indirect
-	github.com/docker/go-units v0.3.3 // indirect
-	github.com/evanphx/json-patch v4.1.0+incompatible // indirect
-	github.com/fsnotify/fsnotify v1.4.7 // indirect
-	github.com/fullsailor/pkcs7 v0.0.0-20180613152042-8306686428a5
-	github.com/gizak/termui/v3 v3.0.0
-	github.com/godbus/dbus v4.1.0+incompatible // indirect
-	github.com/gogo/googleapis v1.1.0 // indirect
-	github.com/golang/groupcache v0.0.0-20181024230925-c65c006176ff // indirect
-	github.com/golang/protobuf v1.3.1
-	github.com/google/btree v1.0.0 // indirect
-	github.com/google/go-cmp v0.3.0 // indirect
-	github.com/google/gofuzz v0.0.0-20170612174753-24818f796faf // indirect
-	github.com/google/uuid v1.1.1
-	github.com/googleapis/gnostic v0.2.0 // indirect
-	github.com/gorilla/websocket v1.4.0 // indirect
-	github.com/grpc-ecosystem/go-grpc-middleware v1.0.0 // indirect
-	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0 // indirect
-	github.com/grpc-ecosystem/grpc-gateway v1.9.2 // indirect
-	github.com/hashicorp/go-multierror v1.0.0
-	github.com/hashicorp/golang-lru v0.5.1 // indirect
-	github.com/hpcloud/tail v1.0.0 // indirect
-	github.com/imdario/mergo v0.3.6 // indirect
-	github.com/inconshreveable/mousetrap v1.0.0 // indirect
-	github.com/jonboulle/clockwork v0.1.0 // indirect
-	github.com/jsimonetti/rtnetlink v0.0.0-20190606172950-9527aa82566a
-	github.com/lithammer/dedent v1.1.0 // indirect
-	github.com/mdlayher/genetlink v0.0.0-20190313224034-60417448a851
-	github.com/mdlayher/netlink v0.0.0-20190419142405-71c9566a34ae
-	github.com/onsi/ginkgo v1.6.0 // indirect
-	github.com/onsi/gomega v1.4.1 // indirect
-	github.com/opencontainers/go-digest v1.0.0-rc1 // indirect
+	github.com/dustin/go-humanize v1.0.0
+	github.com/elazarl/goproxy v0.0.0-20210110162100-a92cc753f88e // indirect
+	github.com/emicklei/dot v0.15.0
+	github.com/emicklei/go-restful v2.15.0+incompatible // indirect
+	github.com/evanphx/json-patch v4.9.0+incompatible
+	github.com/fatih/color v1.10.0
+	github.com/firecracker-microvm/firecracker-go-sdk v0.22.0
+	github.com/fsnotify/fsnotify v1.4.9
+	github.com/fullsailor/pkcs7 v0.0.0-20190404230743-d7302db945fa
+	github.com/gdamore/tcell/v2 v2.2.0
+	github.com/gizak/termui/v3 v3.1.0
+	github.com/gogo/googleapis v1.4.0 // indirect
+	github.com/golang/protobuf v1.5.2
+	github.com/google/go-cmp v0.5.5
+	github.com/google/uuid v1.2.0
+	github.com/grpc-ecosystem/go-grpc-middleware v1.2.2
+	github.com/hashicorp/go-getter v1.5.2
+	github.com/hashicorp/go-multierror v1.1.1
+	github.com/insomniacslk/dhcp v0.0.0-20210120172423-cc9239ac6294
+	github.com/jsimonetti/rtnetlink v0.0.0-20210226120601-1b79e63a70a0
+	github.com/mattn/go-isatty v0.0.12
+	github.com/mdlayher/genetlink v1.0.0
+	github.com/mdlayher/netlink v1.4.0
+	github.com/morikuni/aec v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.0.1 // indirect
-	github.com/opencontainers/runc v0.1.1 // indirect
-	github.com/opencontainers/runtime-spec v0.1.2-0.20180710222632-d810dbc60d8c
-	github.com/pkg/errors v0.8.1
-	github.com/prometheus/client_golang v1.0.0 // indirect
-	github.com/prometheus/procfs v0.0.2
-	github.com/ryanuber/columnize v2.1.0+incompatible
-	github.com/soheilhy/cmux v0.1.4 // indirect
-	github.com/spf13/afero v1.2.0 // indirect
-	github.com/spf13/cobra v0.0.3
-	github.com/spf13/pflag v1.0.3 // indirect
-	github.com/stretchr/objx v0.2.0 // indirect
-	github.com/stretchr/testify v1.3.1-0.20190311161405-34c6fa2dc709
-	github.com/syndtr/gocapability v0.0.0-20180223013746-33e07d32887e // indirect
-	github.com/talos-systems/dhcp v0.0.0-20190403231749-dd8bdda8e381
-	github.com/tmc/grpc-websocket-proxy v0.0.0-20190109142713-0ad062ec5ee5 // indirect
-	github.com/u-root/u-root v4.0.0+incompatible // indirect
-	github.com/vishvananda/netlink v1.0.0
-	github.com/vishvananda/netns v0.0.0-20180720170159-13995c7128cc // indirect
-	github.com/vmware/vmw-guestinfo v0.0.0-20170707015358-25eff159a728
-	github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2 // indirect
-	go.etcd.io/bbolt v1.3.3 // indirect
-	go.etcd.io/etcd v3.3.13+incompatible
-	go.uber.org/atomic v1.4.0 // indirect
-	go.uber.org/multierr v1.1.0 // indirect
-	go.uber.org/zap v1.10.0 // indirect
-	golang.org/x/crypto v0.0.0-20190506204251-e1dfcc566284
-	golang.org/x/net v0.0.0-20190503192946-f4e77d36d62c // indirect
-	golang.org/x/oauth2 v0.0.0-20190402181905-9f3314589c9a // indirect
-	golang.org/x/sync v0.0.0-20190423024810-112230192c58 // indirect
-	golang.org/x/sys v0.0.0-20190508220229-2d0786266e9c
-	golang.org/x/text v0.3.2
-	golang.org/x/time v0.0.0-20190308202827-9d24e82272b4 // indirect
-	golang.org/x/xerrors v0.0.0-20190410155217-1f06c39b4373
-	google.golang.org/appengine v1.5.0 // indirect
-	google.golang.org/genproto v0.0.0-20190508193815-b515fa19cec8 // indirect
-	google.golang.org/grpc v1.20.1
-	gopkg.in/fsnotify.v1 v1.4.7
-	gopkg.in/inf.v0 v0.9.1 // indirect
-	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 // indirect
-	gopkg.in/yaml.v2 v2.2.2
-	gotest.tools v2.1.0+incompatible // indirect
-	k8s.io/api v0.0.0-20190409021203-6e4e0e4f393b
-	k8s.io/apiextensions-apiserver v0.0.0-20190322231200-1c09d17c1352 // indirect
-	k8s.io/apimachinery v0.0.0-20190404173353-6a84e37a896d
-	k8s.io/apiserver v0.0.0-20190324105220-f881eae9ec04 // indirect
-	k8s.io/client-go v11.0.0+incompatible
-	k8s.io/cloud-provider v0.0.0-20190323031113-9c9d72d1bf90 // indirect
-	k8s.io/cluster-bootstrap v0.0.0-20190313124217-0fa624df11e9 // indirect
-	k8s.io/component-base v0.0.0-20190313120452-4727f38490bc // indirect
-	k8s.io/cri-api v0.0.0-20190620080320-8a10675a4b1e
-	k8s.io/klog v0.2.0 // indirect
-	k8s.io/kube-openapi v0.0.0-20190320154901-5e45bb682580 // indirect
-	k8s.io/kube-proxy v0.0.0-20190320190624-78a1c9778e0e // indirect
-	k8s.io/kubelet v0.0.0-20190313123811-3556bcde9670 // indirect
-	k8s.io/kubernetes v1.14.1
-	k8s.io/utils v0.0.0-20190308190857-21c4ce38f2a7 // indirect
-	sigs.k8s.io/yaml v1.1.0 // indirect
+	github.com/opencontainers/runc v1.0.0-rc92 // indirect
+	github.com/opencontainers/runtime-spec v1.0.3-0.20200728170252-4d89ac9fbff6
+	github.com/pin/tftp v2.1.0+incompatible
+	github.com/plunder-app/kube-vip v0.3.2
+	github.com/prometheus/procfs v0.6.0
+	github.com/rivo/tview v0.0.0-20210217110421-8a8f78a6dd01
+	github.com/rs/xid v1.2.1
+	github.com/ryanuber/columnize v2.1.2+incompatible
+	github.com/smira/go-xz v0.0.0-20201019130106-9921ed7a9935
+	github.com/spf13/cobra v1.1.3
+	github.com/stretchr/testify v1.7.0
+	github.com/talos-systems/crypto v0.2.1-0.20210202170911-39584f1b6e54
+	github.com/talos-systems/go-blockdevice v0.2.1-0.20210407132431-1d830a25f64f
+	github.com/talos-systems/go-cmd v0.0.0-20210216164758-68eb0067e0f0
+	github.com/talos-systems/go-loadbalancer v0.1.0
+	github.com/talos-systems/go-procfs v0.0.0-20210108152626-8cbc42d3dc24
+	github.com/talos-systems/go-retry v0.2.1-0.20210119124456-b9dc1a990133
+	github.com/talos-systems/go-smbios v0.0.0-20201228201610-fb425d4727e6
+	github.com/talos-systems/grpc-proxy v0.2.0
+	github.com/talos-systems/net v0.2.1-0.20210212213224-05190541b0fa
+	github.com/talos-systems/talos/pkg/machinery v0.0.0-20210302191918-8ffb55943c71
+	github.com/u-root/u-root v7.0.0+incompatible
+	github.com/vmware-tanzu/sonobuoy v0.20.0
+	github.com/vmware/govmomi v0.24.0
+	github.com/vmware/vmw-guestinfo v0.0.0-20200218095840-687661b8bd8e
+	go.etcd.io/etcd/api/v3 v3.5.0-alpha.0
+	go.etcd.io/etcd/client/v3 v3.5.0-alpha.0
+	go.etcd.io/etcd/etcdctl/v3 v3.5.0-alpha.0
+	go.etcd.io/etcd/pkg/v3 v3.5.0-alpha.0
+	golang.org/x/net v0.0.0-20210226172049-e18ecbb05110
+	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
+	golang.org/x/sys v0.0.0-20210301091718-77cc2087c03b
+	golang.org/x/term v0.0.0-20210220032956-6a3ed077a48d
+	golang.org/x/time v0.0.0-20210220033141-f8bda1e9f3ba
+	golang.zx2c4.com/wireguard/wgctrl v0.0.0-20200609130330-bd2cb7843e1b
+	google.golang.org/grpc v1.37.0
+	google.golang.org/protobuf v1.26.0
+	gopkg.in/freddierice/go-losetup.v1 v1.0.0-20170407175016-fc9adea44124
+	gopkg.in/yaml.v3 v3.0.0-20210107192922-496545a6307b
+	honnef.co/go/tools v0.1.2 // indirect
+	k8s.io/api v0.21.0
+	k8s.io/apimachinery v0.21.0
+	k8s.io/apiserver v0.21.0 // indirect
+	k8s.io/client-go v0.21.0
+	k8s.io/cri-api v0.21.0
+	k8s.io/kubectl v0.21.0
+	k8s.io/kubelet v0.21.0
 )

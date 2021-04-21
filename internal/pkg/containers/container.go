@@ -1,10 +1,11 @@
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 package containers
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -12,12 +13,13 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/talos-systems/talos/internal/pkg/chunker"
-	"github.com/talos-systems/talos/internal/pkg/chunker/file"
-	"github.com/talos-systems/talos/internal/pkg/chunker/stream"
+	"github.com/talos-systems/talos/pkg/chunker"
+	"github.com/talos-systems/talos/pkg/chunker/file"
+	"github.com/talos-systems/talos/pkg/chunker/stream"
+	"github.com/talos-systems/talos/pkg/tail"
 )
 
-// Container presents information about a container
+// Container presents information about a container.
 type Container struct {
 	Inspector Inspector
 
@@ -36,18 +38,18 @@ type Container struct {
 	IsPodSandbox bool // real container or just pod sandbox
 }
 
-// ContainerMetrics represents container cgroup stats
+// ContainerMetrics represents container cgroup stats.
 type ContainerMetrics struct {
 	MemoryUsage uint64
 	CPUUsage    uint64
 }
 
-// GetProcessStderr returns process stderr
+// GetProcessStderr returns process stderr.
 func (c *Container) GetProcessStderr() (string, error) {
 	return c.Inspector.GetProcessStderr(c.ID)
 }
 
-// GetLogFile returns path to log file, k8s-style
+// GetLogFile returns path to log file, k8s-style.
 func (c *Container) GetLogFile() string {
 	if c.LogPath != "" {
 		return c.LogPath
@@ -60,13 +62,13 @@ func (c *Container) GetLogFile() string {
 	return filepath.Join(c.Sandbox, c.Name, c.RestartCount+".log")
 }
 
-// Kill sends signal to container task
+// Kill sends signal to container task.
 func (c *Container) Kill(signal syscall.Signal) error {
 	return c.Inspector.Kill(c.ID, c.IsPodSandbox, signal)
 }
 
-// GetLogChunker returns chunker for container log file
-func (c *Container) GetLogChunker() (chunker.Chunker, io.Closer, error) {
+// GetLogChunker returns chunker for container log file.
+func (c *Container) GetLogChunker(ctx context.Context, follow bool, tailLines int) (chunker.Chunker, io.Closer, error) {
 	logFile := c.GetLogFile()
 	if logFile != "" {
 		f, err := os.OpenFile(logFile, os.O_RDONLY, 0)
@@ -74,13 +76,28 @@ func (c *Container) GetLogChunker() (chunker.Chunker, io.Closer, error) {
 			return nil, nil, err
 		}
 
-		return file.NewChunker(f), f, nil
+		if tailLines >= 0 {
+			err = tail.SeekLines(f, tailLines)
+			if err != nil {
+				f.Close() //nolint:errcheck
+
+				return nil, nil, fmt.Errorf("error tailing log: %w", err)
+			}
+		}
+
+		chunkerOptions := []file.Option{}
+		if follow {
+			chunkerOptions = append(chunkerOptions, file.WithFollow())
+		}
+
+		return file.NewChunker(ctx, f, chunkerOptions...), f, nil
 	}
 
 	filename, err := c.GetProcessStderr()
 	if err != nil {
 		return nil, nil, err
 	}
+
 	if filename == "" {
 		return nil, nil, fmt.Errorf("no log available")
 	}
@@ -90,5 +107,5 @@ func (c *Container) GetLogChunker() (chunker.Chunker, io.Closer, error) {
 		return nil, nil, err
 	}
 
-	return stream.NewChunker(f), f, nil
+	return stream.NewChunker(ctx, f), f, nil
 }

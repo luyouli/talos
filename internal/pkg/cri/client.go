@@ -1,16 +1,18 @@
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 package cri
 
 import (
 	"context"
+	"fmt"
 	"time"
 
-	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
+
+	"github.com/talos-systems/talos/pkg/grpc/dialer"
 )
 
 // Client is a lightweight implementation of CRI client.
@@ -21,10 +23,10 @@ type Client struct {
 }
 
 // maxMsgSize use 16MB as the default message size limit.
-// grpc library default is 4MB
+// grpc library default is 4MB.
 const maxMsgSize = 1024 * 1024 * 16
 
-// NewClient builds CRI client
+// NewClient builds CRI client.
 func NewClient(endpoint string, connectionTimeout time.Duration) (*Client, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
 	defer cancel()
@@ -33,10 +35,12 @@ func NewClient(endpoint string, connectionTimeout time.Duration) (*Client, error
 		grpc.WithInsecure(),
 		grpc.WithBlock(),
 		grpc.FailOnNonTempDialError(false),
-		grpc.WithBackoffMaxDelay(3*time.Second),
-		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxMsgSize)))
+		grpc.WithBackoffMaxDelay(3*time.Second), //nolint:staticcheck
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxMsgSize)),
+		grpc.WithContextDialer(dialer.DialUnix()),
+	)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error connecting to CRI")
+		return nil, fmt.Errorf("error connecting to CRI: %w", err)
 	}
 
 	return &Client{
@@ -46,7 +50,7 @@ func NewClient(endpoint string, connectionTimeout time.Duration) (*Client, error
 	}, nil
 }
 
-// Close connection
+// Close connection.
 func (c *Client) Close() error {
 	return c.conn.Close()
 }

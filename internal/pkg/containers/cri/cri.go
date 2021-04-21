@@ -1,6 +1,6 @@
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 // Package cri implements containers.Inspector via CRI
 package cri
@@ -14,9 +14,9 @@ import (
 
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
 
-	"github.com/talos-systems/talos/internal/pkg/constants"
 	ctrs "github.com/talos-systems/talos/internal/pkg/containers"
 	criclient "github.com/talos-systems/talos/internal/pkg/cri"
+	"github.com/talos-systems/talos/pkg/machinery/constants"
 )
 
 type inspector struct {
@@ -28,17 +28,17 @@ type inspectorOptions struct {
 	criEndpoint string
 }
 
-// Option configures containerd Inspector
+// Option configures containerd Inspector.
 type Option func(*inspectorOptions)
 
-// WithCRIEndpoint configures CRI endpoint to use
+// WithCRIEndpoint configures CRI endpoint to use.
 func WithCRIEndpoint(endpoint string) Option {
 	return func(o *inspectorOptions) {
 		o.criEndpoint = endpoint
 	}
 }
 
-// NewInspector builds new Inspector instance for CRI
+// NewInspector builds new Inspector instance for CRI.
 func NewInspector(ctx context.Context, options ...Option) (ctrs.Inspector, error) {
 	var err error
 
@@ -53,6 +53,7 @@ func NewInspector(ctx context.Context, options ...Option) (ctrs.Inspector, error
 	i := inspector{
 		ctx: ctx,
 	}
+
 	i.client, err = criclient.NewClient(opt.criEndpoint, 10*time.Second)
 	if err != nil {
 		return nil, err
@@ -61,12 +62,12 @@ func NewInspector(ctx context.Context, options ...Option) (ctrs.Inspector, error
 	return &i, nil
 }
 
-// Close frees associated resources
+// Close frees associated resources.
 func (i *inspector) Close() error {
 	return i.client.Close()
 }
 
-// Images returns a hash of image digest -> name
+// Images returns a hash of image digest -> name.
 func (i *inspector) Images() (map[string]string, error) {
 	images, err := i.client.ListImages(i.ctx, &runtimeapi.ImageFilter{})
 	if err != nil {
@@ -84,11 +85,12 @@ func (i *inspector) Images() (map[string]string, error) {
 	return result, nil
 }
 
-func parseContainerDisplay(id string) (namespace string, pod string, name string) {
+func parseContainerDisplay(id string) (namespace, pod, name string) {
 	slashIdx := strings.Index(id, "/")
 	if slashIdx > 0 {
 		namespace, pod = id[:slashIdx], id[slashIdx+1:]
 		semicolonIdx := strings.LastIndex(pod, ":")
+
 		if semicolonIdx > 0 {
 			name = pod[semicolonIdx+1:]
 			pod = pod[:semicolonIdx]
@@ -102,7 +104,7 @@ func parseContainerDisplay(id string) (namespace string, pod string, name string
 
 // Container returns info about a single container.
 //
-// If container is not found, Container returns nil
+// If container is not found, Container returns nil.
 func (i *inspector) Container(id string) (*ctrs.Container, error) {
 	namespace, pod, name := parseContainerDisplay(id)
 	if pod == "" {
@@ -137,16 +139,12 @@ func (i *inspector) Container(id string) (*ctrs.Container, error) {
 
 	// request for a container
 	containers, err := i.client.ListContainers(i.ctx, &runtimeapi.ContainerFilter{
-		State: &runtimeapi.ContainerStateValue{
-			State: runtimeapi.ContainerState_CONTAINER_RUNNING,
-		},
 		LabelSelector: map[string]string{
 			"io.kubernetes.pod.name":       pod,
 			"io.kubernetes.pod.namespace":  namespace,
 			"io.kubernetes.container.name": name,
 		},
 	})
-
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +204,7 @@ func (i *inspector) buildPod(sandbox *runtimeapi.PodSandbox) (*ctrs.Pod, error) 
 }
 
 func (i *inspector) buildContainer(container *runtimeapi.Container) (*ctrs.Container, error) {
-	containerStatus, containerInfo, err := i.client.ContainerStatus(i.ctx, container.Id)
+	containerStatus, containerInfo, err := i.client.ContainerStatus(i.ctx, container.Id, true)
 	if err != nil {
 		return nil, err
 	}
@@ -242,7 +240,7 @@ func (i *inspector) buildContainer(container *runtimeapi.Container) (*ctrs.Conta
 
 // Pods collects information about running pods & containers.
 //
-//nolint: gocyclo
+//nolint:gocyclo
 func (i *inspector) Pods() ([]*ctrs.Pod, error) {
 	sandboxes, err := i.client.ListPodSandbox(i.ctx, &runtimeapi.PodSandboxFilter{
 		State: &runtimeapi.PodSandboxStateValue{
@@ -253,11 +251,7 @@ func (i *inspector) Pods() ([]*ctrs.Pod, error) {
 		return nil, err
 	}
 
-	containers, err := i.client.ListContainers(i.ctx, &runtimeapi.ContainerFilter{
-		State: &runtimeapi.ContainerStateValue{
-			State: runtimeapi.ContainerState_CONTAINER_RUNNING,
-		},
-	})
+	containers, err := i.client.ListContainers(i.ctx, &runtimeapi.ContainerFilter{})
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +260,9 @@ func (i *inspector) Pods() ([]*ctrs.Pod, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	metricsPerContainer := map[string]*runtimeapi.ContainerStats{}
+
 	for _, metric := range metrics {
 		metricsPerContainer[metric.Attributes.Id] = metric
 	}
@@ -327,13 +323,13 @@ func (i *inspector) Pods() ([]*ctrs.Pod, error) {
 	return result, nil
 }
 
-// GetProcessStderr returns process stderr
+// GetProcessStderr returns process stderr.
 func (i *inspector) GetProcessStderr(id string) (string, error) {
 	// CRI doesn't seem to have an easy way to do that
 	return "", nil
 }
 
-// Kill sends signal to container task
+// Kill sends signal to container task.
 func (i *inspector) Kill(id string, isPodSandbox bool, signal syscall.Signal) error {
 	if isPodSandbox {
 		return i.client.StopPodSandbox(i.ctx, id)

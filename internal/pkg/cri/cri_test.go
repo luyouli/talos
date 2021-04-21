@@ -1,6 +1,6 @@
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 package cri_test
 
@@ -16,12 +16,12 @@ import (
 	"github.com/stretchr/testify/suite"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
 
-	"github.com/talos-systems/talos/internal/app/init/pkg/system/events"
-	"github.com/talos-systems/talos/internal/app/init/pkg/system/runner"
-	"github.com/talos-systems/talos/internal/app/init/pkg/system/runner/process"
-	"github.com/talos-systems/talos/internal/pkg/constants"
+	"github.com/talos-systems/talos/internal/app/machined/pkg/runtime/logging"
+	"github.com/talos-systems/talos/internal/app/machined/pkg/system/events"
+	"github.com/talos-systems/talos/internal/app/machined/pkg/system/runner"
+	"github.com/talos-systems/talos/internal/app/machined/pkg/system/runner/process"
 	"github.com/talos-systems/talos/internal/pkg/cri"
-	"github.com/talos-systems/talos/pkg/userdata"
+	"github.com/talos-systems/talos/pkg/machinery/constants"
 )
 
 const (
@@ -31,7 +31,6 @@ const (
 func MockEventSink(state events.ServiceState, message string, args ...interface{}) {
 }
 
-// nolint: maligned
 type CRISuite struct {
 	suite.Suite
 
@@ -46,7 +45,6 @@ type CRISuite struct {
 	ctxCancel context.CancelFunc
 }
 
-// nolint: dupl
 func (suite *CRISuite) SetupSuite() {
 	var err error
 
@@ -54,33 +52,35 @@ func (suite *CRISuite) SetupSuite() {
 	suite.Require().NoError(err)
 
 	stateDir, rootDir := filepath.Join(suite.tmpDir, "state"), filepath.Join(suite.tmpDir, "root")
-	suite.Require().NoError(os.Mkdir(stateDir, 0777))
-	suite.Require().NoError(os.Mkdir(rootDir, 0777))
+	suite.Require().NoError(os.Mkdir(stateDir, 0o777))
+	suite.Require().NoError(os.Mkdir(rootDir, 0o777))
 
 	suite.containerdAddress = filepath.Join(suite.tmpDir, "run.sock")
 
 	args := &runner.Args{
 		ID: "containerd",
 		ProcessArgs: []string{
-			"/rootfs/bin/containerd",
+			"/bin/containerd",
 			"--address", suite.containerdAddress,
 			"--state", stateDir,
 			"--root", rootDir,
+			"--config", constants.CRIContainerdConfig,
 		},
 	}
 
 	suite.containerdRunner = process.NewRunner(
-		&userdata.UserData{},
+		false,
 		args,
-		runner.WithLogPath(suite.tmpDir),
-		runner.WithEnv([]string{"PATH=/rootfs/bin:" + constants.PATH}),
+		runner.WithLoggingManager(logging.NewFileLoggingManager(suite.tmpDir)),
+		runner.WithEnv([]string{"PATH=/bin:" + constants.PATH}),
 	)
 	suite.Require().NoError(suite.containerdRunner.Open(context.Background()))
 	suite.containerdWg.Add(1)
+
 	go func() {
 		defer suite.containerdWg.Done()
-		defer func() { suite.Require().NoError(suite.containerdRunner.Close()) }()
-		suite.Require().NoError(suite.containerdRunner.Run(MockEventSink))
+		defer suite.containerdRunner.Close()      //nolint:errcheck
+		suite.containerdRunner.Run(MockEventSink) //nolint:errcheck
 	}()
 
 	suite.client, err = cri.NewClient("unix:"+suite.containerdAddress, 30*time.Second)
@@ -137,6 +137,11 @@ func (suite *CRISuite) TestRunSandboxContainer() {
 	}, podSandboxConfig)
 	suite.Require().NoError(err)
 
+	_, err = suite.client.ImageStatus(suite.ctx, &runtimeapi.ImageSpec{
+		Image: imageRef,
+	})
+	suite.Require().NoError(err)
+
 	ctrID, err := suite.client.CreateContainer(suite.ctx, podSandboxID,
 		&runtimeapi.ContainerConfig{
 			Metadata: &runtimeapi.ContainerMetadata{
@@ -164,7 +169,7 @@ func (suite *CRISuite) TestRunSandboxContainer() {
 	_, err = suite.client.ContainerStats(suite.ctx, ctrID)
 	suite.Require().NoError(err)
 
-	_, _, err = suite.client.ContainerStatus(suite.ctx, ctrID)
+	_, _, err = suite.client.ContainerStatus(suite.ctx, ctrID, true)
 	suite.Require().NoError(err)
 
 	err = suite.client.StopContainer(suite.ctx, ctrID, 10)
@@ -196,11 +201,13 @@ func (suite *CRISuite) TestList() {
 	_, err = suite.client.ListImages(suite.ctx, &runtimeapi.ImageFilter{})
 	suite.Require().NoError(err)
 }
+
 func TestCRISuite(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("can't run the test as non-root")
 	}
-	_, err := os.Stat("/rootfs/bin/containerd")
+
+	_, err := os.Stat("/bin/containerd")
 	if err != nil {
 		t.Skip("containerd binary is not available, skipping the test")
 	}

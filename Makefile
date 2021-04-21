@@ -1,308 +1,389 @@
-KERNEL_IMAGE ?= autonomy/kernel:87a888a
-TOOLCHAIN_IMAGE ?= autonomy/toolchain:6cf146a
-ROOTFS_IMAGE ?= autonomy/rootfs-base:6cf146a
-INITRAMFS_IMAGE ?= autonomy/initramfs-base:6cf146a
+REGISTRY ?= ghcr.io
+USERNAME ?= talos-systems
+SHA ?= $(shell git describe --match=none --always --abbrev=8 --dirty)
+TAG ?= $(shell git describe --tag --always --dirty)
+IMAGE_REGISTRY ?= $(REGISTRY)
+IMAGE_TAG ?= $(TAG)
+BRANCH ?= $(shell git rev-parse --abbrev-ref HEAD)
+REGISTRY_AND_USERNAME := $(IMAGE_REGISTRY)/$(USERNAME)
+DOCKER_LOGIN_ENABLED ?= true
+NAME = Talos
 
-# TODO(andrewrynhard): Move this logic to a shell script.
-BUILDKIT_VERSION ?= v0.5.0
-KUBECTL_VERSION ?= v1.14.1
-BUILDKIT_IMAGE ?= moby/buildkit:$(BUILDKIT_VERSION)
-BUILDKIT_HOST ?= tcp://0.0.0.0:1234
-BUILDKIT_CONTAINER_NAME ?= talos-buildkit
-BUILDKIT_CONTAINER_STOPPED := $(shell docker ps --filter name=$(BUILDKIT_CONTAINER_NAME) --filter status=exited --format='{{.Names}}' 2>/dev/null)
-BUILDKIT_CONTAINER_RUNNING := $(shell docker ps --filter name=$(BUILDKIT_CONTAINER_NAME) --filter status=running --format='{{.Names}}' 2>/dev/null)
+ARTIFACTS := _out
+TOOLS ?= ghcr.io/talos-systems/tools:v0.5.0
+PKGS ?= v0.5.0-1-g5dd650b
+EXTRAS ?= v0.3.0
+GO_VERSION ?= 1.16
+GOFUMPT_VERSION ?= v0.1.0
+STRINGER_VERSION ?= v0.1.0
+IMPORTVET ?= autonomy/importvet:f6b07d9
+OPERATING_SYSTEM := $(shell uname -s | tr "[:upper:]" "[:lower:]")
+TALOSCTL_DEFAULT_TARGET := talosctl-$(OPERATING_SYSTEM)
+INTEGRATION_TEST_DEFAULT_TARGET := integration-test-$(OPERATING_SYSTEM)
+INTEGRATION_TEST_PROVISION_DEFAULT_TARGET := integration-test-provision-$(OPERATING_SYSTEM)
+KUBECTL_URL ?= https://storage.googleapis.com/kubernetes-release/release/v1.21.0/bin/$(OPERATING_SYSTEM)/amd64/kubectl
+CLUSTERCTL_VERSION ?= 0.3.15
+CLUSTERCTL_URL ?= https://github.com/kubernetes-sigs/cluster-api/releases/download/v$(CLUSTERCTL_VERSION)/clusterctl-$(OPERATING_SYSTEM)-amd64
+SONOBUOY_VERSION ?= 0.50.0
+SONOBUOY_URL ?= https://github.com/vmware-tanzu/sonobuoy/releases/download/v$(SONOBUOY_VERSION)/sonobuoy_$(SONOBUOY_VERSION)_$(OPERATING_SYSTEM)_amd64.tar.gz
+TESTPKGS ?= github.com/talos-systems/talos/...
+RELEASES ?= v0.9.1 v0.10.0-alpha.2
+SHORT_INTEGRATION_TEST ?=
+CUSTOM_CNI_URL ?=
 
-UNAME_S := $(shell uname -s)
-ifeq ($(UNAME_S),Linux)
-BUILDCTL_ARCHIVE := https://github.com/moby/buildkit/releases/download/$(BUILDKIT_VERSION)/buildkit-$(BUILDKIT_VERSION).linux-amd64.tar.gz
-BUILDKIT_CACHE ?= -v $(HOME)/.buildkit:/var/lib/buildkit
-endif
-ifeq ($(UNAME_S),Darwin)
-BUILDCTL_ARCHIVE := https://github.com/moby/buildkit/releases/download/$(BUILDKIT_VERSION)/buildkit-$(BUILDKIT_VERSION).darwin-amd64.tar.gz
-BUILDKIT_CACHE ?=
-endif
+VERSION_PKG = github.com/talos-systems/talos/pkg/version
+IMAGES_PKGS = github.com/talos-systems/talos/pkg/images
+MGMT_HELPERS_PKG = github.com/talos-systems/talos/cmd/talosctl/pkg/mgmt/helpers
 
-ifeq ($(UNAME_S),Linux)
-KUBECTL_ARCHIVE := https://storage.googleapis.com/kubernetes-release/release/$(KUBECTL_VERSION)/bin/linux/amd64/kubectl
-endif
-ifeq ($(UNAME_S),Darwin)
-KUBECTL_ARCHIVE := https://storage.googleapis.com/kubernetes-release/release/$(KUBECTL_VERSION)/bin/darwin/amd64/kubectl
-endif
+CGO_ENABLED ?= 0
+GO_BUILDFLAGS ?=
+GO_LDFLAGS ?= -s -w \
+	-X $(VERSION_PKG).Name=$(NAME) \
+	-X $(VERSION_PKG).SHA=$(SHA) \
+	-X $(VERSION_PKG).Tag=$(TAG) \
+	-X $(VERSION_PKG).PkgsVersion=$(PKGS) \
+	-X $(VERSION_PKG).ExtrasVersion=$(EXTRAS) \
+	-X $(IMAGES_PKGS).Username=$(USERNAME) \
+	-X $(IMAGES_PKGS).Registry=$(REGISTRY) \
+	-X $(MGMT_HELPERS_PKG).ArtifactsPath=$(ARTIFACTS)
 
-ifeq ($(UNAME_S),Linux)
-GITMETA := https://github.com/talos-systems/gitmeta/releases/download/v0.1.0-alpha.2/gitmeta-linux-amd64
-endif
-ifeq ($(UNAME_S),Darwin)
-GITMETA := https://github.com/talos-systems/gitmeta/releases/download/v0.1.0-alpha.2/gitmeta-darwin-amd64
-endif
+WITH_RACE ?=
 
-BINDIR ?= ./bin
-CONFORM_VERSION ?= 57c9dbd
-
-SHA := $(shell $(BINDIR)/gitmeta git sha)
-TAG := $(shell $(BINDIR)/gitmeta image tag)
-
-COMMON_ARGS = --progress=plain
-COMMON_ARGS += --frontend=dockerfile.v0
-COMMON_ARGS += --local context=.
-COMMON_ARGS += --local dockerfile=.
-COMMON_ARGS += --opt build-arg:KERNEL_IMAGE=$(KERNEL_IMAGE)
-COMMON_ARGS += --opt build-arg:TOOLCHAIN_IMAGE=$(TOOLCHAIN_IMAGE)
-COMMON_ARGS += --opt build-arg:ROOTFS_IMAGE=$(ROOTFS_IMAGE)
-COMMON_ARGS += --opt build-arg:INITRAMFS_IMAGE=$(INITRAMFS_IMAGE)
-COMMON_ARGS += --opt build-arg:SHA=$(SHA)
-COMMON_ARGS += --opt build-arg:TAG=$(TAG)
-
-DOCKER_ARGS ?=
-# to allow tests to run containerd
-DOCKER_TEST_ARGS = --security-opt seccomp:unconfined --privileged -v /var/lib/containerd/ -v /tmp/
-
-all: ci drone
-
-.PHONY: drone
-drone: rootfs initramfs kernel binaries installer talos
-
-.PHONY: ci
-ci: builddeps buildkitd
-
-
-.PHONY: builddeps
-builddeps: gitmeta buildctl
-
-gitmeta: $(BINDIR)/gitmeta
-
-$(BINDIR)/gitmeta:
-	@mkdir -p $(BINDIR)
-	@curl -L $(GITMETA) -o $(BINDIR)/gitmeta
-	@chmod +x $(BINDIR)/gitmeta
-
-buildctl: $(BINDIR)/buildctl
-
-$(BINDIR)/buildctl:
-	@mkdir -p $(BINDIR)
-	@curl -L $(BUILDCTL_ARCHIVE) | tar -zxf - -C $(BINDIR) --strip-components 1 bin/buildctl
-
-kubectl: $(BINDIR)/kubectl
-
-$(BINDIR)/kubectl:
-	@mkdir -p $(BINDIR)
-	@curl -L -o $(BINDIR)/kubectl $(KUBECTL_ARCHIVE)
-	@chmod +x $(BINDIR)/kubectl
-
-.PHONY: buildkitd
-buildkitd:
-ifeq (tcp://0.0.0.0:1234,$(findstring tcp://0.0.0.0:1234,$(BUILDKIT_HOST)))
-ifeq ($(BUILDKIT_CONTAINER_STOPPED),$(BUILDKIT_CONTAINER_NAME))
-	@echo "Removing exited talos-buildkit container"
-	@docker rm $(BUILDKIT_CONTAINER_NAME)
-endif
-ifneq ($(BUILDKIT_CONTAINER_RUNNING),$(BUILDKIT_CONTAINER_NAME))
-	@echo "Starting talos-buildkit container"
-	@docker run \
-		--name $(BUILDKIT_CONTAINER_NAME) \
-		-d \
-		--privileged \
-		-p 1234:1234 \
-		$(BUILDKIT_CACHE) \
-		$(BUILDKIT_IMAGE) \
-		--addr $(BUILDKIT_HOST)
-	@echo "Wait for buildkitd to become available"
-	@sleep 5
-endif
+ifneq ($(strip $(WITH_RACE)),)
+CGO_ENABLED = 1
+GO_BUILDFLAGS += -race
+GO_LDFLAGS += -linkmode=external -extldflags '-static'
 endif
 
-.PHONY: binaries
-binaries: buildkitd
-	@$(BINDIR)/buildctl --addr $(BUILDKIT_HOST) \
-		build \
-    --output type=local,dest=build \
-		--opt target=$@ \
-		$(COMMON_ARGS)
+, := ,
+space := $(subst ,, )
+BUILD := docker buildx build
+PLATFORM ?= linux/amd64
+PROGRESS ?= auto
+PUSH ?= false
+COMMON_ARGS := --file=Dockerfile
+COMMON_ARGS += --progress=$(PROGRESS)
+COMMON_ARGS += --platform=$(PLATFORM)
+COMMON_ARGS += --push=$(PUSH)
+COMMON_ARGS += --build-arg=TOOLS=$(TOOLS)
+COMMON_ARGS += --build-arg=PKGS=$(PKGS)
+COMMON_ARGS += --build-arg=EXTRAS=$(EXTRAS)
+COMMON_ARGS += --build-arg=GOFUMPT_VERSION=$(GOFUMPT_VERSION)
+COMMON_ARGS += --build-arg=STRINGER_VERSION=$(STRINGER_VERSION)
+COMMON_ARGS += --build-arg=TAG=$(TAG)
+COMMON_ARGS += --build-arg=ARTIFACTS=$(ARTIFACTS)
+COMMON_ARGS += --build-arg=IMPORTVET=$(IMPORTVET)
+COMMON_ARGS += --build-arg=TESTPKGS=$(TESTPKGS)
+COMMON_ARGS += --build-arg=CGO_ENABLED=$(CGO_ENABLED)
+COMMON_ARGS += --build-arg=GO_BUILDFLAGS="$(GO_BUILDFLAGS)"
+COMMON_ARGS += --build-arg=GO_LDFLAGS="$(GO_LDFLAGS)"
+COMMON_ARGS += --build-arg=http_proxy=$(http_proxy)
+COMMON_ARGS += --build-arg=https_proxy=$(https_proxy)
 
-base: buildkitd
-	@$(BINDIR)/buildctl --addr $(BUILDKIT_HOST) \
-		build \
-		--output type=docker,dest=build/$@.tar,name=docker.io/autonomy/$@:$(TAG) \
-		--opt target=$@ \
-		$(COMMON_ARGS)
+CI_ARGS ?=
+
+all: initramfs kernel installer talosctl talosctl-image talos
+
+# Help Menu
+
+define HELP_MENU_HEADER
+# Getting Started
+
+To build this project, you must have the following installed:
+
+- git
+- make
+- docker (19.03 or higher)
+- buildx (https://github.com/docker/buildx)
+
+## Creating a Builder Instance
+
+The build process makes use of features not currently supported by the default
+builder instance (docker driver). To create a compatible builder instance, run:
+
+```
+docker buildx create --driver docker-container --name local --buildkitd-flags '--allow-insecure-entitlement security.insecure' --use
+```
+
+If you already have a compatible builder instance, you may use that instead.
+
+> Note: The security.insecure entitlement is only required, and used by the unit-tests target and targets which build container images
+for applications using `img` tool.
+
+## Artifacts
+
+All artifacts will be output to ./$(ARTIFACTS). Images will be tagged with the
+registry "$(IMAGE_REGISTRY)", username "$(USERNAME)", and a dynamic tag (e.g. $(REGISTRY_AND_USERNAME)/image:$(IMAGE_TAG)).
+The registry and username can be overriden by exporting REGISTRY, and USERNAME
+respectively.
+
+## Race Detector
+
+Building with `WITH_RACE=1` enables race detector in the Talos executables. Integration tests are always built with the race detector
+enabled.
+
+endef
+
+export HELP_MENU_HEADER
+
+help: ## This help menu.
+	@echo "$$HELP_MENU_HEADER"
+	@grep -E '^[a-zA-Z0-9%_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
+
+# Build Abstractions
+
+.PHONY: base
+target-%: ## Builds the specified target defined in the Dockerfile. The build result will only remain in the build cache.
+	@$(BUILD) \
+		--target=$* \
+		$(COMMON_ARGS) \
+		$(TARGET_ARGS) \
+		$(CI_ARGS) .
+
+local-%: ## Builds the specified target defined in the Dockerfile using the local output type. The build result will be output to the specified local destination.
+	@$(MAKE) target-$* TARGET_ARGS="--output=type=local,dest=$(DEST) $(TARGET_ARGS)"
+	@PLATFORM=$(PLATFORM) \
+		ARTIFACTS=$(ARTIFACTS) \
+		./hack/fix-artifacts.sh
+
+docker-%: ## Builds the specified target defined in the Dockerfile using the docker output type. The build result will be output to the specified local destination.
+	@mkdir -p $(DEST)
+	@$(MAKE) target-$* TARGET_ARGS="--output type=docker,dest=$(DEST)/$*.tar,name=$(REGISTRY_AND_USERNAME)/$*:$(IMAGE_TAG) $(TARGET_ARGS)"
+
+registry-%: ## Builds the specified target defined in the Dockerfile using the image/registry output type. The build result will be pushed to the registry if PUSH=true.
+	@$(MAKE) target-$* TARGET_ARGS="--output type=image,name=$(REGISTRY_AND_USERNAME)/$*:$(IMAGE_TAG) $(TARGET_ARGS)"
+
+hack-test-%: ## Runs the specied script in ./hack/test with well known environment variables.
+	@./hack/test/$*.sh
+
+# Generators
+
+.PHONY: generate
+generate: ## Generates code from protobuf service definitions and machinery config.
+	@$(MAKE) local-$@ DEST=./ PLATFORM=linux/amd64
+
+.PHONY: docs
+docs: ## Generates the documentation for machine config, and talosctl.
+	@rm -rf docs/configuration/*
+	@rm -rf docs/talosctl/*
+	@$(MAKE) local-$@ DEST=./ PLATFORM=linux/amd64
+
+# Local Artifacts
 
 .PHONY: kernel
-kernel: buildkitd
-	@$(BINDIR)/buildctl --addr $(BUILDKIT_HOST) \
-		build \
-    --output type=local,dest=build \
-		--opt target=$@ \
-		$(COMMON_ARGS)
-	@-rm -rf ./build/modules
+kernel: ## Outputs the kernel package contents (vmlinuz) to the artifact directory.
+	@$(MAKE) local-$@ DEST=$(ARTIFACTS) PUSH=false
+	@-rm -rf $(ARTIFACTS)/modules
 
 .PHONY: initramfs
-initramfs: buildkitd
-	@$(BINDIR)/buildctl --addr $(BUILDKIT_HOST) \
-		build \
-    --output type=local,dest=build \
-		--opt target=$@ \
-		$(COMMON_ARGS)
-
-.PHONY: rootfs
-rootfs: buildkitd osd trustd proxyd ntpd
-	@$(BINDIR)/buildctl --addr $(BUILDKIT_HOST) \
-		build \
-    --output type=local,dest=build \
-		--opt target=$@ \
-		$(COMMON_ARGS)
+initramfs: ## Builds the compressed initramfs and outputs it to the artifact directory.
+	@$(MAKE) local-$@ DEST=$(ARTIFACTS) PUSH=false TARGET_ARGS="--allow security.insecure"
 
 .PHONY: installer
-installer: buildkitd
-	@mkdir -p build
-	@$(BINDIR)/buildctl --addr $(BUILDKIT_HOST) \
-		build \
-		--output type=docker,dest=build/$@.tar,name=docker.io/autonomy/$@:$(TAG) \
-		--opt target=$@ \
-		$(COMMON_ARGS)
-	@docker load < build/$@.tar
-
-.PHONY: proto
-proto: buildkitd
-	$(BINDIR)/buildctl --addr $(BUILDKIT_HOST) \
-		build \
-    --output type=local,dest=./ \
-		--opt target=$@ \
-		$(COMMON_ARGS)
-
-.PHONY: talos-gce
-talos-gce:
-	@docker run --rm -v /dev:/dev -v $(PWD)/build:/out --privileged $(DOCKER_ARGS) autonomy/installer:$(TAG) install -n disk -r -p googlecloud -u none
-	@tar -C $(PWD)/build -czf $(PWD)/build/$@.tar.gz disk.raw
-	@rm -rf $(PWD)/build/disk.raw
-
-.PHONY: talos-iso
-talos-iso:
-	@docker run --rm -i -v $(PWD)/build:/out autonomy/installer:$(TAG) iso
-
-.PHONY: talos-aws
-talos-aws:
-	@docker run \
-		--rm \
-		-i \
-		-e AWS_ACCESS_KEY_ID=$(AWS_ACCESS_KEY_ID) \
-		-e AWS_SECRET_ACCESS_KEY=$(AWS_SECRET_ACCESS_KEY) \
-		-e AWS_DEFAULT_REGION=$(AWS_DEFAULT_REGION) \
-		autonomy/installer:$(TAG) ami -var regions=${AWS_PUBLISH_REGIONS} -var visibility=all
-
-.PHONY: talos-raw
-talos-raw:
-	@docker run --rm -v /dev:/dev -v $(PWD)/build:/out --privileged $(DOCKER_ARGS) autonomy/installer:$(TAG) install -n rootfs -r -b
+installer: ## Builds the container image for the installer and outputs it to the artifact directory.
+	@$(MAKE) registry-$@ TARGET_ARGS="--allow security.insecure"
 
 .PHONY: talos
-talos: buildkitd
-	@$(BINDIR)/buildctl --addr $(BUILDKIT_HOST) \
-		build \
-		--output type=docker,dest=build/$@.tar,name=docker.io/autonomy/$@:$(TAG) \
-		--opt target=$@ \
-		$(COMMON_ARGS)
-	@docker load < build/$@.tar
+talos: ## Builds the Talos container image and outputs it to the artifact directory.
+	@$(MAKE) registry-$@ TARGET_ARGS="--allow security.insecure"
 
-.PHONY: basic-integration
-basic-integration:
-	@KUBERNETES_VERSION=v1.15.0 ./hack/test/$@.sh
+.PHONY: talosctl-image
+talosctl-image: ## Builds the talosctl container image and outputs it to the artifact directory.
+	@$(MAKE) registry-talosctl TARGET_ARGS="--allow security.insecure"
 
-.PHONY: e2e
-e2e-integration:
-	@KUBERNETES_VERSION=v1.15.0 ./hack/test/$@.sh
+talosctl-%:
+	@$(MAKE) local-$@ DEST=$(ARTIFACTS) PLATFORM=linux/amd64 PUSH=false NAME=Client
 
-.PHONY: test
-test: buildkitd
-	@mkdir -p build
-	@$(BINDIR)/buildctl --addr $(BUILDKIT_HOST) \
-		build \
-		--output type=docker,dest=/tmp/$@.tar,name=docker.io/autonomy/$@:$(TAG) \
-		--opt target=$@ \
-		$(COMMON_ARGS)
-	@docker load < /tmp/$@.tar
-	@trap "rm -rf ./.artifacts" EXIT; mkdir -p ./.artifacts && \
-		docker run -i --rm $(DOCKER_TEST_ARGS) -v $(PWD)/.artifacts:/src/artifacts autonomy/$@:$(TAG) /bin/$@.sh && \
-		cp ./.artifacts/coverage.txt coverage.txt
+talosctl: $(TALOSCTL_DEFAULT_TARGET) ## Builds the talosctl binary for the local machine.
 
-.PHONY: dev-test
-dev-test:
-	@docker run -i --rm $(DOCKER_TEST_ARGS) \
-		-v $(PWD)/internal:/src/internal:ro \
-		-v $(PWD)/pkg:/src/pkg:ro \
-		-v $(PWD)/cmd:/src/cmd:ro \
-		autonomy/test:$(TAG) \
-		go test -v ./...
+image-%: ## Builds the specified image. Valid options are aws, azure, digital-ocean, gcp, and vmware (e.g. image-aws)
+	@docker pull $(REGISTRY_AND_USERNAME)/installer:$(TAG)
+	@for platform in $(subst $(,),$(space),$(PLATFORM)); do \
+		arch=`basename "$${platform}"` ; \
+		docker run --rm -v /dev:/dev --privileged $(REGISTRY_AND_USERNAME)/installer:$(TAG) image --platform $* --arch $$arch --tar-to-stdout | tar xz -C $(ARTIFACTS) ; \
+	done
 
-.PHONY: lint
-lint: buildkitd
-	@$(BINDIR)/buildctl --addr $(BUILDKIT_HOST) \
-		build \
-		--opt target=$@ \
-		$(COMMON_ARGS)
+images: image-aws image-azure image-digital-ocean image-gcp image-metal image-openstack image-vmware ## Builds all known images (AWS, Azure, DigitalOcean, GCP, Metal, Openstack, and VMware).
 
-.PHONY: osctl-linux-amd64
-osctl-linux-amd64: buildkitd
-	@$(BINDIR)/buildctl --addr $(BUILDKIT_HOST) \
-		build \
-    --output type=local,dest=build \
-		--opt target=$@ \
-		$(COMMON_ARGS)
+sbc-%: ## Builds the specified SBC image. Valid options are rpi_4, rock64, bananapi_m64, libretech_all_h3_cc_h5, and rockpi_4 (e.g. sbc-rpi_4)
+	@docker pull $(REGISTRY_AND_USERNAME)/installer:$(TAG)
+	@docker run --rm -v /dev:/dev --privileged $(REGISTRY_AND_USERNAME)/installer:$(TAG) image --platform metal --arch arm64 --board $* --tar-to-stdout | tar xz -C $(ARTIFACTS)
 
-.PHONY: osctl-darwin-amd64
-osctl-darwin-amd64: buildkitd
-	@$(BINDIR)/buildctl --addr $(BUILDKIT_HOST) \
-		build \
-    --output type=local,dest=build \
-		--opt target=$@ \
-		$(COMMON_ARGS)
+sbcs: sbc-rpi_4 sbc-rock64 sbc-bananapi_m64 sbc-libretech_all_h3_cc_h5 sbc-rockpi_4 ## Builds all known SBC images (Raspberry Pi 4 Model B, Rock64, Banana Pi M64, Radxa ROCK Pi 4, and Libre Computer Board ALL-H3-CC).
 
-.PHONY: osd
-osd: buildkitd images
-	@$(BINDIR)/buildctl --addr $(BUILDKIT_HOST) \
-		build \
-		--output type=docker,dest=images/$@.tar,name=docker.io/autonomy/$@:$(TAG) \
-		--opt target=$@ \
-		$(COMMON_ARGS)
+.PHONY: iso
+iso: ## Builds the ISO and outputs it to the artifact directory.
+	@docker pull $(REGISTRY_AND_USERNAME)/installer:$(TAG)
+	@for platform in $(subst $(,),$(space),$(PLATFORM)); do \
+		arch=`basename "$${platform}"` ; \
+		docker run --rm -i $(REGISTRY_AND_USERNAME)/installer:$(TAG) iso --arch $$arch --tar-to-stdout | tar xz -C $(ARTIFACTS)  ; \
+	done
 
-.PHONY: trustd
-trustd: buildkitd images
-	@$(BINDIR)/buildctl --addr $(BUILDKIT_HOST) \
-		build \
-		--output type=docker,dest=images/$@.tar,name=docker.io/autonomy/$@:$(TAG) \
-		--opt target=$@ \
-		$(COMMON_ARGS)
+.PHONY: boot
+boot: ## Creates a compressed tarball that includes vmlinuz-{amd64,arm64} and initramfs-{amd64,arm64}.xz. Note that these files must already be present in the artifacts directory.
+	@for platform in $(subst $(,),$(space),$(PLATFORM)); do \
+		arch=`basename "$${platform}"` ; \
+		tar  -C $(ARTIFACTS) --transform=s/-$${arch}// -czf $(ARTIFACTS)/boot-$${arch}.tar.gz vmlinuz-$${arch} initramfs-$${arch}.xz ; \
+	done
 
-.PHONY: proxyd
-proxyd: buildkitd images
-	@$(BINDIR)/buildctl --addr $(BUILDKIT_HOST) \
-		build \
-		--output type=docker,dest=images/$@.tar,name=docker.io/autonomy/$@:$(TAG) \
-		--opt target=$@ \
-		$(COMMON_ARGS)
+.PHONY: talosctl-cni-bundle
+talosctl-cni-bundle: ## Creates a compressed tarball that includes CNI bundle for talosctl.
+	@$(MAKE) local-$@ DEST=$(ARTIFACTS)
+	@for platform in $(subst $(,),$(space),$(PLATFORM)); do \
+		arch=`basename "$${platform}"` ; \
+		tar  -C $(ARTIFACTS)/talosctl-cni-bundle-$${arch} -czf $(ARTIFACTS)/talosctl-cni-bundle-$${arch}.tar.gz . ; \
+	done
+	@rm -rf $(ARTIFACTS)/talosctl-cni-bundle-*/
 
-.PHONY: ntpd
-ntpd: buildkitd images
-	@$(BINDIR)/buildctl --addr $(BUILDKIT_HOST) \
-		build \
-		--output type=docker,dest=images/$@.tar,name=docker.io/autonomy/$@:$(TAG) \
-		--opt target=$@ \
-		$(COMMON_ARGS)
+.PHONY: cloud-images
+cloud-images: ## Uploads cloud images (AMIs, etc.) to the cloud registry.
+	@docker run --rm -v $(PWD):/src -w /src \
+		-e TAG=$(TAG) -e ARTIFACTS=$(ARTIFACTS) \
+		-e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SVC_ACCT \
+		-e AZURE_SVC_ACCT -e GCE_SVC_ACCT -e PACKET_AUTH_TOKEN \
+		golang:$(GO_VERSION) \
+		./hack/cloud-image-uploader.sh
 
-images:
-	@mkdir images
+# Code Quality
+
+.PHONY: fmt
+fmt: ## Formats the source code.
+	@docker run --rm -it -v $(PWD):/src -w /src golang:$(GO_VERSION) bash -c "go install mvdan.cc/gofumpt/gofumports@$(GOFUMPT_VERSION) && gofumports -w -local github.com/talos-systems/talos ."
+
+lint-%: ## Runs the specified linter. Valid options are go, protobuf, and markdown (e.g. lint-go).
+	@$(MAKE) target-lint-$* PLATFORM=linux/amd64
+
+lint: ## Runs linters on go, protobuf, and markdown file types.
+	@$(MAKE) lint-go lint-protobuf lint-markdown
+
+check-dirty: ## Verifies that source tree is not dirty
+	@if test -n "`git status --porcelain`"; then echo "Source tree is dirty"; git status; exit 1 ; fi
+
+# Tests
+
+.PHONY: unit-tests
+unit-tests: ## Performs unit tests.
+	@$(MAKE) local-$@ DEST=$(ARTIFACTS) TARGET_ARGS="--allow security.insecure" PLATFORM=linux/amd64
+
+.PHONY: unit-tests-race
+unit-tests-race: ## Performs unit tests with race detection enabled.
+	@$(MAKE) target-$@ TARGET_ARGS="--allow security.insecure" PLATFORM=linux/amd64
+
+$(ARTIFACTS)/$(INTEGRATION_TEST_DEFAULT_TARGET)-amd64:
+	@$(MAKE) local-$(INTEGRATION_TEST_DEFAULT_TARGET) DEST=$(ARTIFACTS) PLATFORM=linux/amd64 WITH_RACE=true NAME=Client
+
+$(ARTIFACTS)/$(INTEGRATION_TEST_PROVISION_DEFAULT_TARGET)-amd64:
+	@$(MAKE) local-$(INTEGRATION_TEST_PROVISION_DEFAULT_TARGET) DEST=$(ARTIFACTS) PLATFORM=linux/amd64 WITH_RACE=true NAME=Client
+
+$(ARTIFACTS)/sonobuoy:
+	@mkdir -p $(ARTIFACTS)
+	@curl -L -o /tmp/sonobuoy.tar.gz ${SONOBUOY_URL}
+	@tar -xf /tmp/sonobuoy.tar.gz -C $(ARTIFACTS)
+
+$(ARTIFACTS)/kubectl:
+	@mkdir -p $(ARTIFACTS)
+	@curl -L -o $(ARTIFACTS)/kubectl "$(KUBECTL_URL)"
+	@chmod +x $(ARTIFACTS)/kubectl
+
+$(ARTIFACTS)/clusterctl:
+	@mkdir -p $(ARTIFACTS)
+	@curl -L -o $(ARTIFACTS)/clusterctl "$(CLUSTERCTL_URL)"
+	@chmod +x $(ARTIFACTS)/clusterctl
+
+e2e-%: $(ARTIFACTS)/$(INTEGRATION_TEST_DEFAULT_TARGET)-amd64 $(ARTIFACTS)/sonobuoy $(ARTIFACTS)/kubectl $(ARTIFACTS)/clusterctl ## Runs the E2E test for the specified platform (e.g. e2e-docker).
+	@$(MAKE) hack-test-$@ \
+		PLATFORM=$* \
+		TAG=$(TAG) \
+		SHA=$(SHA) \
+		REGISTRY=$(IMAGE_REGISTRY) \
+		IMAGE=$(REGISTRY_AND_USERNAME)/talos:$(TAG) \
+		INSTALLER_IMAGE=$(REGISTRY_AND_USERNAME)/installer:$(TAG) \
+		ARTIFACTS=$(ARTIFACTS) \
+		TALOSCTL=$(PWD)/$(ARTIFACTS)/$(TALOSCTL_DEFAULT_TARGET)-amd64 \
+		INTEGRATION_TEST=$(PWD)/$(ARTIFACTS)/$(INTEGRATION_TEST_DEFAULT_TARGET)-amd64 \
+		SHORT_INTEGRATION_TEST=$(SHORT_INTEGRATION_TEST) \
+		CUSTOM_CNI_URL=$(CUSTOM_CNI_URL) \
+		KUBECTL=$(PWD)/$(ARTIFACTS)/kubectl \
+		SONOBUOY=$(PWD)/$(ARTIFACTS)/sonobuoy \
+		CLUSTERCTL=$(PWD)/$(ARTIFACTS)/clusterctl
+
+provision-tests-prepare: release-artifacts $(ARTIFACTS)/$(INTEGRATION_TEST_PROVISION_DEFAULT_TARGET)-amd64
+
+provision-tests: provision-tests-prepare
+	@$(MAKE) hack-test-$@ \
+		TAG=$(TAG) \
+		TALOSCTL=$(PWD)/$(ARTIFACTS)/$(TALOSCTL_DEFAULT_TARGET)-amd64 \
+		INTEGRATION_TEST=$(PWD)/$(ARTIFACTS)/$(INTEGRATION_TEST_PROVISION_DEFAULT_TARGET)-amd64
+
+provision-tests-track-%:
+	@$(MAKE) hack-test-provision-tests \
+		TAG=$(TAG) \
+		TALOSCTL=$(PWD)/$(ARTIFACTS)/$(TALOSCTL_DEFAULT_TARGET)-amd64 \
+		INTEGRATION_TEST=$(PWD)/$(ARTIFACTS)/$(INTEGRATION_TEST_PROVISION_DEFAULT_TARGET)-amd64 \
+		INTEGRATION_TEST_RUN="TestIntegration/.+-TR$*" \
+		INTEGRATION_TEST_TRACK="$*" \
+		CUSTOM_CNI_URL=$(CUSTOM_CNI_URL) \
+		REGISTRY=$(IMAGE_REGISTRY) \
+		ARTIFACTS=$(ARTIFACTS)
+
+# Assets for releases
+
+.PHONY: $(ARTIFACTS)/$(TALOS_RELEASE)
+$(ARTIFACTS)/$(TALOS_RELEASE): $(ARTIFACTS)/$(TALOS_RELEASE)/vmlinuz $(ARTIFACTS)/$(TALOS_RELEASE)/initramfs.xz
+
+# download release artifacts for specific version
+$(ARTIFACTS)/$(TALOS_RELEASE)/%:
+	@mkdir -p $(ARTIFACTS)/$(TALOS_RELEASE)/
+	@case "$(TALOS_RELEASE)" in \
+		v0.6*) \
+			curl -L -o "$(ARTIFACTS)/$(TALOS_RELEASE)/$*" "https://github.com/talos-systems/talos/releases/download/$(TALOS_RELEASE)/$*" \
+			;; \
+		v0.7.0-alpha.[0-3]) \
+			curl -L -o "$(ARTIFACTS)/$(TALOS_RELEASE)/$*" "https://github.com/talos-systems/talos/releases/download/$(TALOS_RELEASE)/$*" \
+			;; \
+		*) \
+			case "$*" in \
+				vmlinuz) \
+					curl -L -o "$(ARTIFACTS)/$(TALOS_RELEASE)/$*" "https://github.com/talos-systems/talos/releases/download/$(TALOS_RELEASE)/vmlinuz-amd64" \
+					;; \
+				initramfs.xz) \
+					curl -L -o "$(ARTIFACTS)/$(TALOS_RELEASE)/$*" "https://github.com/talos-systems/talos/releases/download/$(TALOS_RELEASE)/initramfs-amd64.xz" \
+					;; \
+			esac \
+			;; \
+	esac
+
+
+.PHONY: release-artifacts
+release-artifacts:
+	@for release in $(RELEASES); do \
+		$(MAKE) $(ARTIFACTS)/$$release TALOS_RELEASE=$$release; \
+	done
+
+# Utilities
+
+.PHONY: conformance
+conformance: ## Performs policy checks against the commit and source code.
+	docker run --rm -it -v $(PWD):/src -w /src docker.io/autonomy/conform:v0.1.0-alpha.20
+
+.PHONY: release-notes
+release-notes:
+	ARTIFACTS=$(ARTIFACTS) ./hack/release.sh $@ $(ARTIFACTS)/RELEASE_NOTES.md $(TAG)
 
 .PHONY: login
-login:
-	@docker login --username "$(DOCKER_USERNAME)" --password "$(DOCKER_PASSWORD)"
+login: ## Logs in to the configured container registry.
+ifeq ($(DOCKER_LOGIN_ENABLED), true)
+	@docker login --username "$(GHCR_USERNAME)" --password "$(GHCR_PASSWORD)" $(IMAGE_REGISTRY)
+endif
 
-.PHONY: push
-push: gitmeta
-	@docker tag autonomy/installer:$(TAG) autonomy/installer:latest
-	@docker push autonomy/installer:$(TAG)
-	@docker push autonomy/installer:latest
-	@docker tag autonomy/talos:$(TAG) autonomy/talos:latest
-	@docker push autonomy/talos:$(TAG)
-	@docker push autonomy/talos:latest
+push: login ## Pushes the installer, and talos images to the configured container registry with the generated tag.
+	@$(MAKE) installer PUSH=true
+	@$(MAKE) talos PUSH=true
+	@$(MAKE) talosctl-image PUSH=true
+
+push-%: login ## Pushes the installer, and talos images to the configured container registry with the specified tag (e.g. push-latest).
+	@$(MAKE) push IMAGE_TAG=$*
 
 .PHONY: clean
-clean:
-	@-rm -rf build images vendor
+clean: ## Cleans up all artifacts.
+	@-rm -rf $(ARTIFACTS)

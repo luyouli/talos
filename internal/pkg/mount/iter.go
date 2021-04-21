@@ -1,6 +1,6 @@
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 package mount
 
@@ -60,6 +60,11 @@ func (p *Points) Get(key string) (value *Point, ok bool) {
 	return nil, false
 }
 
+// Len returns number of mount points.
+func (p *Points) Len() int {
+	return len(p.points)
+}
+
 // Key returns the current key.
 func (i *PointsIterator) Key() string {
 	return i.key
@@ -70,6 +75,7 @@ func (i *PointsIterator) Value() *Point {
 	if i.err != nil || i.index > len(i.p.points) {
 		panic("invoked Value on expired iterator")
 	}
+
 	return i.value
 }
 
@@ -86,11 +92,13 @@ func (i *PointsIterator) Next() bool {
 
 	if i.reverse {
 		i.index--
+
 		if i.index < i.end {
 			return false
 		}
 	} else {
 		i.index++
+
 		if i.index > i.end {
 			return false
 		}

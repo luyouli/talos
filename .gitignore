@@ -1,9 +1,17 @@
+.env
+.envrc
 bin
-build
-cache
-images
-vendor
+_out
 .vscode
+*.code-workspace
+init.yaml
+controlplane.yaml
+join.yaml
+docgen
+talosconfig
+/kubeconfig
+hack/test/libvirt/matchbox/assets/*
+!hack/test/libvirt/matchbox/assets/.gitkeep
 
 # vim Swap
 [._]*.s[a-v][a-z]
@@ -12,18 +20,13 @@ vendor
 [._]ss[a-gi-z]
 [._]sw[a-p]
 
-# protoc-generated files
-*.pb.go
-
 # Go
-coverage.txt
 .artifacts/
-
-# buildkit cache
-.buildkit/
 
 sha256sum.txt
 sha512sum.txt
 
-**/provider-components.yaml
 **/packet-cluster.yaml
+
+# Local Netlify folder
+.netlify
